@@ -3,6 +3,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes.health import router as health_router
+from app.api.routes.repositories import router as repositories_router
 from app.core.config import settings
 
 app = FastAPI(
@@ -25,6 +26,7 @@ app.add_middleware(
 
 # Register routers
 app.include_router(health_router, prefix=settings.API_V1_PREFIX)
+app.include_router(repositories_router, prefix=settings.API_V1_PREFIX)
 # Also register directly at /health for container/ingress health-probes
 app.include_router(health_router)
 

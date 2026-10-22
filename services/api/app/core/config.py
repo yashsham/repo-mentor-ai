@@ -1,6 +1,6 @@
 """Core application configuration and settings."""
 
-from typing import List
+from typing import List, Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -23,6 +23,9 @@ class Settings(BaseSettings):
         "http://localhost:3000",
         "http://127.0.0.1:3000",
     ]
+
+    # GitHub API integration (optional for higher rate limits)
+    GITHUB_TOKEN: Optional[str] = None
 
     # Ingestion constraints
     MAX_REPO_FILES: int = 5000

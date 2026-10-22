@@ -2,14 +2,12 @@
 
 import React, { useState, useEffect } from 'react';
 import {
-  Code2,
   FolderTree,
   GitBranch,
   Play,
   Pause,
   Volume2,
   VolumeX,
-  Search,
   ExternalLink,
   ShieldCheck,
   AlertCircle,
@@ -19,43 +17,135 @@ import {
   ArrowRight,
   Info,
   Terminal,
+  Star,
+  Check,
 } from 'lucide-react';
 import { validateRepositoryUrl, ValidationResult } from '@/lib/validation';
-import { checkBackendHealth, HealthStatus } from '@/lib/api';
+import {
+  checkBackendHealth,
+  analyzeRepository,
+  fetchFileContent,
+  HealthStatus,
+  RepositoryAnalyzeResponse,
+  FileNode,
+  FileContentResponse,
+} from '@/lib/api';
+import { FileTree } from '@/components/repository/FileTree';
+import { CodeViewer } from '@/components/code-viewer/CodeViewer';
 
 export default function LandingPage() {
   const [repoUrl, setRepoUrl] = useState('');
   const [validation, setValidation] = useState<ValidationResult | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [activeAnalysisRepo, setActiveAnalysisRepo] = useState<string | null>(null);
+  const [ingestionError, setIngestionError] = useState<string | null>(null);
+
+  // Ingested Repository State
+  const [analysis, setAnalysis] = useState<RepositoryAnalyzeResponse | null>(null);
+  const [selectedFile, setSelectedFile] = useState<FileNode | null>(null);
+  const [fileContent, setFileContent] = useState<FileContentResponse | null>(null);
+  const [isFileLoading, setIsFileLoading] = useState(false);
+  const [fileError, setFileError] = useState<string | null>(null);
+
+  // Center tabs
   const [activeCenterTab, setActiveCenterTab] = useState<'code' | 'architecture' | 'flow'>('code');
+
+  // Audio / Avatar controls preview
   const [isMuted, setIsMuted] = useState(false);
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const [backendHealth, setBackendHealth] = useState<HealthStatus | null>(null);
 
   useEffect(() => {
-    // Poll backend health on initial render
     checkBackendHealth().then(setBackendHealth);
   }, []);
 
-  const handleAnalyze = (e: React.FormEvent) => {
+  // Helper to find initial file to view (prefer README.md or first code file)
+  const findInitialFile = (nodes: FileNode[]): FileNode | null => {
+    for (const node of nodes) {
+      if (node.type === 'file' && node.name.toLowerCase().startsWith('readme')) {
+        return node;
+      }
+    }
+    for (const node of nodes) {
+      if (node.type === 'file' && !node.is_binary) {
+        return node;
+      }
+      if (node.children) {
+        const found = findInitialFile(node.children);
+        if (found) return found;
+      }
+    }
+    return null;
+  };
+
+  const handleAnalyze = async (e: React.FormEvent) => {
     e.preventDefault();
+    setIngestionError(null);
     const result = validateRepositoryUrl(repoUrl);
     setValidation(result);
 
-    if (result.isValid) {
-      setIsSubmitting(true);
-      setTimeout(() => {
-        setIsSubmitting(false);
-        setActiveAnalysisRepo(`${result.owner}/${result.repo}`);
-      }, 400);
+    if (!result.isValid) return;
+
+    setIsSubmitting(true);
+    try {
+      const response = await analyzeRepository(result.normalizedUrl || repoUrl);
+      setAnalysis(response);
+
+      // Auto-select initial file
+      const initial = findInitialFile(response.tree);
+      if (initial) {
+        handleSelectFile(initial, response.metadata.owner, response.metadata.name, response.metadata.commit_sha);
+      } else {
+        setSelectedFile(null);
+        setFileContent(null);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Repository analysis failed';
+      setIngestionError(msg);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleSelectFile = async (
+    node: FileNode,
+    owner = analysis?.metadata.owner,
+    repo = analysis?.metadata.name,
+    commitSha = analysis?.metadata.commit_sha
+  ) => {
+    if (!owner || !repo || !commitSha) return;
+
+    setSelectedFile(node);
+    setActiveCenterTab('code');
+
+    if (node.is_binary) {
+      setFileContent({
+        path: node.path,
+        commit_sha: commitSha,
+        content: '',
+        size: node.size || 0,
+        is_binary: true,
+        language: null,
+      });
+      return;
+    }
+
+    setIsFileLoading(true);
+    setFileError(null);
+    try {
+      const contentRes = await fetchFileContent(owner, repo, node.path, commitSha);
+      setFileContent(contentRes);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to load file';
+      setFileError(msg);
+    } finally {
+      setIsFileLoading(false);
     }
   };
 
   const handleSelectSample = (sampleUrl: string) => {
     setRepoUrl(sampleUrl);
-    const result = validateRepositoryUrl(sampleUrl);
-    setValidation(result);
+    setValidation(validateRepositoryUrl(sampleUrl));
+    setIngestionError(null);
   };
 
   return (
@@ -69,8 +159,8 @@ export default function LandingPage() {
           <div>
             <div className="flex items-center space-x-2">
               <span className="font-bold tracking-tight text-white">RepoMentor AI</span>
-              <span className="text-[10px] font-mono uppercase bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded border border-slate-700">
-                Phase 1 MVP
+              <span className="text-[10px] font-mono uppercase bg-slate-800 text-sky-400 px-1.5 py-0.5 rounded border border-slate-700">
+                Phase 2 Vertical MVP
               </span>
             </div>
             <p className="text-xs text-slate-400 hidden sm:block">
@@ -117,20 +207,20 @@ export default function LandingPage() {
 
       {/* Hero & Ingestion Section */}
       <main className="flex-1 flex flex-col">
-        <section className="px-4 lg:px-8 pt-10 pb-8 max-w-5xl mx-auto w-full text-center">
+        <section className="px-4 lg:px-8 pt-8 pb-6 max-w-5xl mx-auto w-full text-center">
           <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-sky-500/10 border border-sky-500/20 text-sky-300 text-xs font-mono mb-4">
             <ShieldCheck className="h-3.5 w-3.5" />
-            <span>Open-Source First • AST Static Analysis • Zero Arbitrary Code Execution</span>
+            <span>Open-Source First • Immutable Commit Pinning • Zero Arbitrary Code Execution</span>
           </div>
 
-          <h1 className="text-3xl sm:text-5xl font-extrabold tracking-tight text-white mb-4">
+          <h1 className="text-3xl sm:text-5xl font-extrabold tracking-tight text-white mb-3">
             Deeply understand complex codebases through{' '}
             <span className="text-transparent bg-clip-text bg-gradient-to-r from-sky-400 to-indigo-400">
               grounded AI mentoring
             </span>
           </h1>
 
-          <p className="text-slate-400 max-w-2xl mx-auto text-sm sm:text-base leading-relaxed mb-8">
+          <p className="text-slate-400 max-w-2xl mx-auto text-xs sm:text-sm leading-relaxed mb-6">
             RepoMentor AI parses software repositories into deterministic AST symbol graphs,
             visualizes module architectures, and teaches engineering concepts with an animated tutor
             citing exact source files and line ranges.
@@ -161,6 +251,7 @@ export default function LandingPage() {
                     onChange={(e) => {
                       setRepoUrl(e.target.value);
                       if (validation) setValidation(null);
+                      if (ingestionError) setIngestionError(null);
                     }}
                     placeholder="https://github.com/fastapi/fastapi"
                     className="w-full pl-9 pr-3 py-2.5 bg-slate-950 border border-slate-700 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent font-mono transition-all"
@@ -175,7 +266,7 @@ export default function LandingPage() {
                   {isSubmitting ? (
                     <>
                       <div className="h-4 w-4 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
-                      <span>Validating...</span>
+                      <span>Ingesting Tree...</span>
                     </>
                   ) : (
                     <>
@@ -186,7 +277,7 @@ export default function LandingPage() {
                 </button>
               </div>
 
-              {/* Validation Feedback */}
+              {/* Validation & Ingestion Feedback */}
               {validation && !validation.isValid && (
                 <div
                   id="validation-error"
@@ -198,7 +289,18 @@ export default function LandingPage() {
                 </div>
               )}
 
-              {validation && validation.isValid && (
+              {ingestionError && (
+                <div
+                  id="ingestion-error"
+                  role="alert"
+                  className="flex items-center space-x-2 text-rose-400 text-xs bg-rose-950/40 border border-rose-900/60 rounded p-2.5 mt-2"
+                >
+                  <AlertCircle className="h-4 w-4 shrink-0" />
+                  <span>{ingestionError}</span>
+                </div>
+              )}
+
+              {analysis && !ingestionError && (
                 <div
                   id="validation-success"
                   className="flex items-start space-x-2 text-emerald-400 text-xs bg-emerald-950/40 border border-emerald-900/60 rounded p-2.5 mt-2"
@@ -206,10 +308,10 @@ export default function LandingPage() {
                   <CheckCircle2 className="h-4 w-4 shrink-0 mt-0.5" />
                   <div>
                     <div className="font-semibold">
-                      Validated Repository: {validation.owner}/{validation.repo}
+                      Successfully Ingested: {analysis.metadata.full_name} ({analysis.total_files} files indexed)
                     </div>
-                    <div className="text-slate-300 mt-0.5">
-                      Target repository verified. Phase 1 active: Full AST extraction and background ingestion worker activate in Milestone 2. Previewing interface layout below.
+                    <div className="text-slate-300 mt-0.5 font-mono text-[11px]">
+                      Pinned Commit: <code className="text-sky-300">{analysis.metadata.commit_sha.slice(0, 7)}</code> on branch <code className="text-sky-300">{analysis.metadata.default_branch}</code>
                     </div>
                   </div>
                 </div>
@@ -246,24 +348,7 @@ export default function LandingPage() {
           </div>
         </section>
 
-        {/* Milestone 1 Notice Banner */}
-        <section className="px-4 lg:px-8 max-w-7xl mx-auto w-full mb-4">
-          <div className="bg-slate-900 border border-sky-500/30 rounded-lg p-3 text-xs text-slate-300 flex items-center justify-between flex-wrap gap-2">
-            <div className="flex items-center space-x-2">
-              <Info className="h-4 w-4 text-sky-400 shrink-0" />
-              <span>
-                <strong className="text-white">Milestone 1 Preview:</strong> The three-panel workspace below illustrates the target architecture interface. Dynamic ingestion and Tree-sitter AST parsing will activate in Phase 2.
-              </span>
-            </div>
-            <div className="flex items-center space-x-2 font-mono text-[11px]">
-              <span className="px-2 py-0.5 rounded bg-slate-800 text-sky-300 border border-slate-700">
-                Active Target: {activeAnalysisRepo || 'fastapi/fastapi (sample)'}
-              </span>
-            </div>
-          </div>
-        </section>
-
-        {/* THREE-PANEL LEARNING WORKSPACE (PREVIEW) */}
+        {/* THREE-PANEL LEARNING WORKSPACE */}
         <section
           id="workspace-preview"
           aria-label="Three Panel Workspace Preview"
@@ -279,14 +364,36 @@ export default function LandingPage() {
                   <span className="h-3 w-3 rounded-full bg-emerald-500/80 inline-block" />
                 </div>
                 <span className="text-slate-400 border-l border-slate-800 pl-3">
-                  Workspace: <strong className="text-white">{activeAnalysisRepo || 'fastapi/fastapi'}</strong>
+                  Workspace:{' '}
+                  <strong className="text-white">
+                    {analysis ? analysis.metadata.full_name : 'FastAPI / Sample Workspace'}
+                  </strong>
                 </span>
-                <span className="text-slate-500 hidden sm:inline">
-                  (commit: <code className="text-sky-300">8f3d9a1</code>)
-                </span>
+                {analysis && (
+                  <span className="text-slate-400 hidden sm:inline flex items-center space-x-2">
+                    <span>
+                      commit: <code className="text-sky-300">{analysis.metadata.commit_sha.slice(0, 7)}</code>
+                    </span>
+                    {analysis.metadata.stars_count > 0 && (
+                      <span className="flex items-center space-x-1 text-amber-400">
+                        <Star className="h-3 w-3 fill-amber-400" />
+                        <span>{analysis.metadata.stars_count.toLocaleString()}</span>
+                      </span>
+                    )}
+                  </span>
+                )}
               </div>
-              <div className="text-[11px] text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded">
-                LAYOUT PREVIEW ONLY
+              <div className="flex items-center space-x-2">
+                {analysis ? (
+                  <span className="text-[11px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded flex items-center space-x-1">
+                    <Check className="h-3 w-3" />
+                    <span>LIVE INGESTED</span>
+                  </span>
+                ) : (
+                  <div className="text-[11px] text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded">
+                    LAYOUT PREVIEW ONLY
+                  </div>
+                )}
               </div>
             </div>
 
@@ -299,79 +406,38 @@ export default function LandingPage() {
                     <FolderTree className="h-3.5 w-3.5 text-sky-400" />
                     <span>File Explorer</span>
                   </span>
-                  <span className="text-[10px] font-mono text-slate-500">Tree-sitter AST</span>
+                  <span className="text-[10px] font-mono text-slate-500">
+                    {analysis ? `${analysis.total_files} files` : 'Tree-sitter AST'}
+                  </span>
                 </div>
 
-                {/* Filter Input */}
-                <div className="p-2 border-b border-slate-800/60">
-                  <div className="relative">
-                    <Search className="h-3.5 w-3.5 absolute left-2.5 top-2.5 text-slate-500" />
-                    <input
-                      type="text"
-                      readOnly
-                      placeholder="Filter files or symbols..."
-                      className="w-full pl-8 pr-2 py-1.5 bg-slate-950 border border-slate-800 rounded text-xs text-slate-400 focus:outline-none font-mono"
+                {/* File Tree Component */}
+                <div className="flex-1 overflow-hidden">
+                  {analysis ? (
+                    <FileTree
+                      tree={analysis.tree}
+                      selectedPath={selectedFile ? selectedFile.path : null}
+                      onSelectFile={(node) => handleSelectFile(node)}
                     />
-                  </div>
-                </div>
-
-                {/* File Tree List */}
-                <div className="flex-1 overflow-y-auto p-2 font-mono text-xs space-y-1">
-                  <div className="text-slate-400 font-semibold px-2 py-1 flex items-center space-x-1 text-[11px] text-slate-500">
-                    <span>▾ fastapi/</span>
-                  </div>
-
-                  <div className="pl-4 space-y-0.5">
-                    <div className="flex items-center justify-between px-2 py-1.5 rounded bg-sky-500/15 border border-sky-500/30 text-sky-300 cursor-pointer">
-                      <div className="flex items-center space-x-2 truncate">
-                        <Terminal className="h-3.5 w-3.5 text-sky-400" />
-                        <span className="truncate">applications.py</span>
-                      </div>
-                      <span className="text-[10px] text-sky-400/80">Active</span>
-                    </div>
-
-                    <div className="flex items-center justify-between px-2 py-1 rounded text-slate-400 hover:bg-slate-800/50 cursor-pointer">
-                      <div className="flex items-center space-x-2 truncate">
-                        <Terminal className="h-3.5 w-3.5 text-slate-500" />
-                        <span className="truncate">routing.py</span>
-                      </div>
-                      <span className="text-[9px] bg-slate-800 text-slate-500 px-1 rounded">AST</span>
-                    </div>
-
-                    <div className="flex items-center justify-between px-2 py-1 rounded text-slate-400 hover:bg-slate-800/50 cursor-pointer">
-                      <div className="flex items-center space-x-2 truncate">
-                        <Terminal className="h-3.5 w-3.5 text-slate-500" />
-                        <span className="truncate">datastructures.py</span>
+                  ) : (
+                    <div className="p-4 text-center text-xs text-slate-500 space-y-2">
+                      <FolderTree className="h-8 w-8 text-slate-600 mx-auto" />
+                      <p>Enter a repository URL above to load the live file tree.</p>
+                      <div className="text-[11px] text-slate-600 font-mono">
+                        Supports Python, TypeScript, JavaScript, Go, Rust & more.
                       </div>
                     </div>
-
-                    <div className="flex items-center justify-between px-2 py-1 rounded text-slate-400 hover:bg-slate-800/50 cursor-pointer">
-                      <div className="flex items-center space-x-2 truncate">
-                        <Terminal className="h-3.5 w-3.5 text-slate-500" />
-                        <span className="truncate">exceptions.py</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="text-slate-500 font-semibold px-2 py-1 mt-2 text-[11px]">
-                    <span>▸ tests/</span>
-                  </div>
-                  <div className="text-slate-500 font-semibold px-2 py-1 text-[11px]">
-                    <span>▸ docs/</span>
-                  </div>
-                  <div className="px-2 py-1 text-slate-400 flex items-center space-x-2 text-xs">
-                    <span>pyproject.toml</span>
-                  </div>
+                  )}
                 </div>
 
                 {/* Left Bottom: Learning Progress Card */}
                 <div className="p-3 border-t border-slate-800 bg-slate-900/60">
                   <div className="flex items-center justify-between text-xs mb-1.5">
                     <span className="text-slate-400">Curriculum Progress</span>
-                    <span className="font-mono text-sky-400">25% (3/12)</span>
+                    <span className="font-mono text-sky-400">Phase 2 Active</span>
                   </div>
                   <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
-                    <div className="bg-sky-400 h-1.5 rounded-full w-1/4" />
+                    <div className="bg-sky-400 h-1.5 rounded-full w-2/5" />
                   </div>
                 </div>
               </div>
@@ -389,8 +455,8 @@ export default function LandingPage() {
                         : 'border-transparent text-slate-400 hover:text-slate-200'
                     }`}
                   >
-                    <Code2 className="h-3.5 w-3.5 text-sky-400" />
-                    <span>fastapi/applications.py</span>
+                    <Terminal className="h-3.5 w-3.5 text-sky-400" />
+                    <span>{selectedFile ? selectedFile.name : 'fastapi/applications.py'}</span>
                   </button>
                   <button
                     type="button"
@@ -419,74 +485,24 @@ export default function LandingPage() {
                 </div>
 
                 {/* Tab Content */}
-                <div className="flex-1 overflow-y-auto p-4 font-mono text-xs text-slate-300 bg-slate-950">
+                <div className="flex-1 overflow-hidden">
                   {activeCenterTab === 'code' && (
-                    <div className="space-y-1 select-text">
-                      <div className="text-slate-500 text-[11px] mb-3 pb-2 border-b border-slate-800 flex items-center justify-between">
-                        <span># Grounded source references: lines 1-22</span>
-                        <span className="text-sky-400">Tree-sitter Python AST Parsed</span>
-                      </div>
-
-                      <div className="flex">
-                        <span className="w-8 text-slate-600 select-none text-right pr-3">1</span>
-                        <span className="text-purple-400">from</span>
-                        <span className="text-slate-300 ml-1">typing</span>
-                        <span className="text-purple-400 ml-1">import</span>
-                        <span className="text-slate-300 ml-1">Any, Callable, Dict, List, Optional</span>
-                      </div>
-                      <div className="flex">
-                        <span className="w-8 text-slate-600 select-none text-right pr-3">2</span>
-                        <span className="text-purple-400">from</span>
-                        <span className="text-slate-300 ml-1">starlette.applications</span>
-                        <span className="text-purple-400 ml-1">import</span>
-                        <span className="text-slate-300 ml-1">Starlette</span>
-                      </div>
-                      <div className="flex">
-                        <span className="w-8 text-slate-600 select-none text-right pr-3">3</span>
-                        <span className="text-purple-400">from</span>
-                        <span className="text-slate-300 ml-1">fastapi.datastructures</span>
-                        <span className="text-purple-400 ml-1">import</span>
-                        <span className="text-slate-300 ml-1">Default</span>
-                      </div>
-                      <div className="flex">
-                        <span className="w-8 text-slate-600 select-none text-right pr-3">4</span>
-                        <span></span>
-                      </div>
-                      <div className="flex bg-sky-500/10 -mx-4 px-4 py-0.5 border-l-2 border-sky-400">
-                        <span className="w-8 text-sky-400 font-bold select-none text-right pr-3">5</span>
-                        <span className="text-purple-400">class</span>
-                        <span className="text-amber-300 ml-1 font-bold">FastAPI</span>
-                        <span className="text-slate-400">(</span>
-                        <span className="text-teal-300">Starlette</span>
-                        <span className="text-slate-400">):</span>
-                      </div>
-                      <div className="flex bg-sky-500/10 -mx-4 px-4 py-0.5 border-l-2 border-sky-400">
-                        <span className="w-8 text-sky-400 font-bold select-none text-right pr-3">6</span>
-                        <span className="text-slate-500 ml-4">&quot;&quot;&quot;Core FastAPI application instance providing route registration</span>
-                      </div>
-                      <div className="flex bg-sky-500/10 -mx-4 px-4 py-0.5 border-l-2 border-sky-400">
-                        <span className="w-8 text-sky-400 font-bold select-none text-right pr-3">7</span>
-                        <span className="text-slate-500 ml-4">and OpenAPI schema generation.&quot;&quot;&quot;</span>
-                      </div>
-                      <div className="flex">
-                        <span className="w-8 text-slate-600 select-none text-right pr-3">8</span>
-                        <span className="text-purple-400 ml-4">def</span>
-                        <span className="text-sky-300 ml-1">__init__</span>
-                        <span className="text-slate-400">(self, title: str = &quot;FastAPI&quot;, version: str = &quot;0.1.0&quot;):</span>
-                      </div>
-                      <div className="flex">
-                        <span className="w-8 text-slate-600 select-none text-right pr-3">9</span>
-                        <span className="text-slate-300 ml-8">self.title = title</span>
-                      </div>
-                      <div className="flex">
-                        <span className="w-8 text-slate-600 select-none text-right pr-3">10</span>
-                        <span className="text-slate-300 ml-8">self.version = version</span>
-                      </div>
-                      <div className="flex">
-                        <span className="w-8 text-slate-600 select-none text-right pr-3">11</span>
-                        <span className="text-slate-300 ml-8">self.router = APIRouter()</span>
-                      </div>
-                    </div>
+                    <CodeViewer
+                      selectedPath={selectedFile ? selectedFile.path : 'fastapi/applications.py'}
+                      fileData={
+                        fileContent || {
+                          path: 'fastapi/applications.py',
+                          commit_sha: '8f3d9a1',
+                          content:
+                            'from typing import Any, Callable, Dict, List, Optional\nfrom starlette.applications import Starlette\nfrom fastapi.datastructures import Default\n\nclass FastAPI(Starlette):\n    """Core FastAPI application instance providing route registration\n    and OpenAPI schema generation."""\n    def __init__(self, title: str = "FastAPI", version: str = "0.1.0"):\n        self.title = title\n        self.version = version\n        self.router = APIRouter()\n',
+                          size: 320,
+                          is_binary: false,
+                          language: 'python',
+                        }
+                      }
+                      isLoading={isFileLoading}
+                      error={fileError}
+                    />
                   )}
 
                   {activeCenterTab === 'architecture' && (
@@ -495,7 +511,7 @@ export default function LandingPage() {
                         <Layers className="h-8 w-8 text-indigo-400 mx-auto mb-2" />
                         <h4 className="font-semibold text-white text-sm">Interactive React Flow Graph</h4>
                         <p className="text-xs text-slate-400 mt-1">
-                          Phase 3 will render nodes for `FastAPI`, `APIRouter`, and dependencies with interactive edges linking to source definitions.
+                          Phase 3 will render nodes for extracted classes, routers, and dependencies with interactive edges linking to source definitions.
                         </p>
                       </div>
                     </div>
@@ -514,13 +530,19 @@ export default function LandingPage() {
                   )}
                 </div>
 
-                {/* Center Bottom: AST Grounding Indicator */}
+                {/* Center Bottom: Reference Indicator */}
                 <div className="bg-slate-900/60 border-t border-slate-800 px-4 py-2 flex items-center justify-between text-[11px] font-mono text-slate-400">
-                  <div className="flex items-center space-x-2">
-                    <span className="h-2 w-2 rounded-full bg-sky-400" />
-                    <span>Active symbol: <code className="text-sky-300">class FastAPI</code></span>
+                  <div className="flex items-center space-x-2 truncate">
+                    <span className="h-2 w-2 rounded-full bg-sky-400 shrink-0" />
+                    <span className="truncate">
+                      Active: <code className="text-sky-300">{selectedFile ? selectedFile.path : 'fastapi/applications.py'}</code>
+                    </span>
                   </div>
-                  <span>Reference: <code className="text-slate-300">fastapi/applications.py#L5-L11</code></span>
+                  {analysis && (
+                    <span className="shrink-0 text-slate-500 hidden sm:inline">
+                      Commit: <code className="text-slate-300">{analysis.metadata.commit_sha.slice(0, 7)}</code>
+                    </span>
+                  )}
                 </div>
               </div>
 
@@ -570,7 +592,7 @@ export default function LandingPage() {
                     <button
                       type="button"
                       onClick={() => setIsPlayingAudio(!isPlayingAudio)}
-                      className="p-1 text-slate-300 hover:text-white transition-colors"
+                      className="p-1 text-slate-300 hover:text-white transition-colors cursor-pointer"
                       title={isPlayingAudio ? 'Pause Voice' : 'Play Voice'}
                     >
                       {isPlayingAudio ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
@@ -578,7 +600,7 @@ export default function LandingPage() {
                     <button
                       type="button"
                       onClick={() => setIsMuted(!isMuted)}
-                      className="p-1 text-slate-300 hover:text-white transition-colors"
+                      className="p-1 text-slate-300 hover:text-white transition-colors cursor-pointer"
                       title={isMuted ? 'Unmute' : 'Mute'}
                     >
                       {isMuted ? (
@@ -597,13 +619,18 @@ export default function LandingPage() {
                   <div className="bg-slate-900 border border-slate-800 rounded-lg p-3 space-y-2">
                     <div className="font-semibold text-white flex items-center space-x-1.5">
                       <Terminal className="h-3 w-3 text-sky-400" />
-                      <span>Class Overview: FastAPI</span>
+                      <span>Inspecting: {selectedFile ? selectedFile.name : 'fastapi/applications.py'}</span>
                     </div>
                     <p className="text-slate-300 text-[11px] leading-relaxed">
-                      `FastAPI` inherits from Starlette&apos;s ASGI base class. It wraps request routing with automatic OpenAPI 3.1 documentation generation and Pydantic validation.
+                      {selectedFile
+                        ? `Loaded ${selectedFile.path}. Phase 3 AST parsing will extract symbols, classes, functions, and cross-file dependencies for this file.`
+                        : 'Select any source file in the left explorer to view its code, line numbers, and architecture context.'}
                     </p>
                     <div className="text-[10px] text-sky-300 font-mono bg-sky-950/60 p-1.5 rounded border border-sky-900/60">
-                      Grounded citation: <span className="underline">fastapi/applications.py:L5-L11</span>
+                      Target:{' '}
+                      <span className="underline">
+                        {selectedFile ? selectedFile.path : 'fastapi/applications.py:L1-L24'}
+                      </span>
                     </div>
                   </div>
 
@@ -615,7 +642,7 @@ export default function LandingPage() {
                       type="button"
                       className="w-full text-left text-xs text-sky-300 hover:underline py-1"
                     >
-                      &quot;How does APIRouter mount nested sub-applications?&quot;
+                      &quot;Explain the core architecture and entry point of this repository&quot;
                     </button>
                   </div>
                 </div>

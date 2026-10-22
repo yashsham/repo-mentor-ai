@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent, act } from '@testing-library/react';
+import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import LandingPage from '../src/app/page';
+import * as api from '@/lib/api';
 
 vi.mock('@/lib/api', () => ({
   checkBackendHealth: vi.fn().mockResolvedValue({
@@ -9,10 +10,58 @@ vi.mock('@/lib/api', () => ({
     version: '0.1.0',
     timestamp: '2026-10-22T00:00:00Z',
   }),
+  analyzeRepository: vi.fn().mockResolvedValue({
+    metadata: {
+      owner: 'testowner',
+      name: 'testrepo',
+      full_name: 'testowner/testrepo',
+      description: 'A mock repository for testing',
+      default_branch: 'main',
+      commit_sha: '1234567890abcdef1234567890abcdef12345678',
+      html_url: 'https://github.com/testowner/testrepo',
+      language: 'TypeScript',
+      stars_count: 100,
+    },
+    tree: [
+      {
+        path: 'src',
+        name: 'src',
+        type: 'dir',
+        children: [
+          {
+            path: 'src/index.ts',
+            name: 'index.ts',
+            type: 'file',
+            size: 512,
+            is_binary: false,
+            language: 'typescript',
+          },
+        ],
+      },
+      {
+        path: 'README.md',
+        name: 'README.md',
+        type: 'file',
+        size: 256,
+        is_binary: false,
+        language: 'markdown',
+      },
+    ],
+    total_files: 2,
+    status: 'analyzed',
+  }),
+  fetchFileContent: vi.fn().mockResolvedValue({
+    path: 'README.md',
+    commit_sha: '1234567890abcdef1234567890abcdef12345678',
+    content: '# Test Repository\nThis is a test readme file.',
+    size: 45,
+    is_binary: false,
+    language: 'markdown',
+  }),
 }));
 
-describe('LandingPage Component', () => {
-  it('renders product branding and key call to action', async () => {
+describe('LandingPage Component (Phase 2)', () => {
+  it('renders product branding and headline', async () => {
     await act(async () => {
       render(<LandingPage />);
     });
@@ -31,24 +80,12 @@ describe('LandingPage Component', () => {
     expect(screen.getByRole('button', { name: /Analyze Repository/i })).toBeInTheDocument();
   });
 
-  it('renders the three-panel workspace preview with preview notice', async () => {
-    await act(async () => {
-      render(<LandingPage />);
-    });
-    expect(screen.getByLabelText(/Three Panel Workspace Preview/i)).toBeInTheDocument();
-    expect(screen.getByText(/File Explorer/i)).toBeInTheDocument();
-    expect(screen.getAllByText(/fastapi\/applications\.py/i).length).toBeGreaterThan(0);
-    expect(screen.getByText(/AI Tutor Avatar/i)).toBeInTheDocument();
-    expect(screen.getAllByText(/PREVIEW/i).length).toBeGreaterThan(0);
-  });
-
-  it('displays a validation error when submitting an empty or invalid URL', async () => {
+  it('displays a validation error when submitting an empty URL', async () => {
     await act(async () => {
       render(<LandingPage />);
     });
     const analyzeBtn = screen.getByRole('button', { name: /Analyze Repository/i });
 
-    // Submit empty input
     await act(async () => {
       fireEvent.click(analyzeBtn);
     });
@@ -56,16 +93,23 @@ describe('LandingPage Component', () => {
     expect(alert).toHaveTextContent(/Please provide a repository URL/i);
   });
 
-  it('accepts sample repository clicks and populates input', async () => {
+  it('analyzes repository and displays live metadata and tree', async () => {
     await act(async () => {
       render(<LandingPage />);
     });
-    const sampleBtn = screen.getByRole('button', { name: /fastapi\/fastapi/i });
-    await act(async () => {
-      fireEvent.click(sampleBtn);
-    });
 
     const input = screen.getByLabelText(/GitHub Repository URL/i) as HTMLInputElement;
-    expect(input.value).toBe('https://github.com/fastapi/fastapi');
+    fireEvent.change(input, { target: { value: 'https://github.com/testowner/testrepo' } });
+
+    const form = input.closest('form')!;
+    await act(async () => {
+      fireEvent.submit(form);
+    });
+
+    await waitFor(() => {
+      expect(api.analyzeRepository).toHaveBeenCalledWith('https://github.com/testowner/testrepo');
+      expect(screen.getByText(/Successfully Ingested: testowner\/testrepo/i)).toBeInTheDocument();
+      expect(screen.getAllByText(/README\.md/i).length).toBeGreaterThan(0);
+    });
   });
 });
