@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend-test:
+    name: Backend Tests (FastAPI & Pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          cd services/api
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run pytest
+        run: |
+          cd services/api
+          pytest -v
+
+  frontend-test:
+    name: Frontend Tests (Next.js & Vitest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: |
+          cd apps/web
+          npm ci || npm install
+
+      - name: Type check
+        run: |
+          cd apps/web
+          npm run typecheck
+
+      - name: Run unit tests
+        run: |
+          cd apps/web
+          npm test
+
+      - name: Build Next.js app
+        run: |
+          cd apps/web
+          npm run build
