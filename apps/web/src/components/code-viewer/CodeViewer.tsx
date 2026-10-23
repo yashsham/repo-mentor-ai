@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   FileCode,
   Copy,
@@ -8,29 +8,51 @@ import {
   AlertTriangle,
   FileQuestion,
   Loader2,
+  Box,
+  Braces,
+  Terminal,
+  ChevronDown,
+  ChevronRight,
 } from 'lucide-react';
-import { FileContentResponse } from '@/lib/api';
+import { FileContentResponse, FileAnalysisResult, Symbol } from '@/lib/api';
 
 interface CodeViewerProps {
   selectedPath: string | null;
   fileData: FileContentResponse | null;
+  analysis?: FileAnalysisResult | null;
   isLoading: boolean;
   error: string | null;
+  targetLine?: number;
 }
 
 export const CodeViewer: React.FC<CodeViewerProps> = ({
   selectedPath,
   fileData,
+  analysis,
   isLoading,
   error,
+  targetLine,
 }) => {
   const [copied, setCopied] = useState(false);
+  const [showSymbols, setShowSymbols] = useState(true);
+  const [activeLine, setActiveLine] = useState<number | undefined>(targetLine);
+  const codeContainerRef = useRef<HTMLDivElement>(null);
 
   const handleCopy = () => {
     if (fileData?.content) {
       navigator.clipboard.writeText(fileData.content);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  const jumpToLine = (line: number) => {
+    setActiveLine(line);
+    if (codeContainerRef.current) {
+      const lineElement = codeContainerRef.current.querySelector(`[data-line="${line}"]`);
+      if (lineElement) {
+        lineElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
     }
   };
 
@@ -82,6 +104,7 @@ export const CodeViewer: React.FC<CodeViewerProps> = ({
   }
 
   const lines = fileData.content.split('\n');
+  const symbols = analysis?.symbols || [];
 
   return (
     <div className="h-full flex flex-col bg-slate-950 font-mono text-xs overflow-hidden">
@@ -95,12 +118,22 @@ export const CodeViewer: React.FC<CodeViewerProps> = ({
               {fileData.language}
             </span>
           )}
+          {symbols.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowSymbols(!showSymbols)}
+              className="flex items-center space-x-1 px-1.5 py-0.5 rounded text-[10px] bg-indigo-500/10 text-indigo-300 border border-indigo-500/30 hover:bg-indigo-500/20 transition-colors cursor-pointer"
+            >
+              <Braces className="h-3 w-3" />
+              <span>{symbols.length} AST Symbols</span>
+              {showSymbols ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+            </button>
+          )}
         </div>
 
         <div className="flex items-center space-x-3 shrink-0">
           <span className="text-[11px] text-slate-500">
-            {lines.length} {lines.length === 1 ? 'line' : 'lines'} •{' '}
-            {(fileData.size / 1024).toFixed(1)} KB
+            {lines.length} {lines.length === 1 ? 'line' : 'lines'} • {(fileData.size / 1024).toFixed(1)} KB
           </span>
 
           <button
@@ -124,22 +157,70 @@ export const CodeViewer: React.FC<CodeViewerProps> = ({
         </div>
       </div>
 
+      {/* Syntax Error Banner if Present */}
+      {analysis && analysis.syntax_errors.length > 0 && (
+        <div className="bg-amber-950/40 border-b border-amber-900/60 px-4 py-2 text-xs text-amber-300 flex items-center space-x-2">
+          <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400" />
+          <span>{analysis.syntax_errors[0]}</span>
+        </div>
+      )}
+
+      {/* AST Symbols Quick Bar */}
+      {showSymbols && symbols.length > 0 && (
+        <div className="bg-slate-900/70 border-b border-slate-800 px-3 py-1.5 flex items-center space-x-2 overflow-x-auto text-[11px] shrink-0">
+          <span className="text-slate-500 text-[10px] shrink-0 uppercase tracking-wider">Symbols:</span>
+          {symbols.map((sym, idx) => (
+            <button
+              key={`${sym.name}-${idx}`}
+              type="button"
+              onClick={() => jumpToLine(sym.span.start_line)}
+              className="flex items-center space-x-1 px-2 py-0.5 rounded bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-sky-300 transition-colors shrink-0 cursor-pointer"
+              title={`Jump to line ${sym.span.start_line}`}
+            >
+              {sym.kind === 'class' ? (
+                <Box className="h-3 w-3 text-amber-400" />
+              ) : sym.kind === 'method' ? (
+                <Terminal className="h-3 w-3 text-purple-400" />
+              ) : (
+                <FileCode className="h-3 w-3 text-sky-400" />
+              )}
+              <span>{sym.name}</span>
+              <span className="text-[9px] text-slate-500">L{sym.span.start_line}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Code Text View with Line Numbers */}
-      <div className="flex-1 overflow-auto p-4 select-text">
+      <div ref={codeContainerRef} className="flex-1 overflow-auto p-4 select-text">
         {lines.length === 0 || (lines.length === 1 && lines[0] === '') ? (
           <div className="text-slate-500 italic py-4">File is empty.</div>
         ) : (
           <div className="min-w-fit">
-            {lines.map((line, idx) => (
-              <div key={idx} className="flex hover:bg-slate-900/60 leading-5">
-                <span className="w-10 text-slate-600 select-none text-right pr-4 shrink-0 font-mono text-[11px]">
-                  {idx + 1}
-                </span>
-                <span className="text-slate-200 whitespace-pre font-mono text-xs">
-                  {line || ' '}
-                </span>
-              </div>
-            ))}
+            {lines.map((line, idx) => {
+              const lineNum = idx + 1;
+              const isHighlighted = activeLine === lineNum;
+              return (
+                <div
+                  key={idx}
+                  data-line={lineNum}
+                  className={`flex leading-5 transition-colors ${
+                    isHighlighted ? 'bg-sky-500/20 border-l-2 border-sky-400 -ml-4 pl-4' : 'hover:bg-slate-900/60'
+                  }`}
+                >
+                  <span
+                    className={`w-10 select-none text-right pr-4 shrink-0 font-mono text-[11px] ${
+                      isHighlighted ? 'text-sky-400 font-bold' : 'text-slate-600'
+                    }`}
+                  >
+                    {lineNum}
+                  </span>
+                  <span className="text-slate-200 whitespace-pre font-mono text-xs">
+                    {line || ' '}
+                  </span>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

@@ -58,9 +58,34 @@ vi.mock('@/lib/api', () => ({
     is_binary: false,
     language: 'markdown',
   }),
+  analyzeFileAST: vi.fn().mockResolvedValue({
+    file_path: 'README.md',
+    language: 'markdown',
+    symbols: [],
+    imports: [],
+    syntax_errors: [],
+    line_count: 2,
+    is_supported: false,
+  }),
+  fetchRepositoryGraph: vi.fn().mockResolvedValue({
+    nodes: [
+      {
+        id: 'src/index.ts',
+        label: 'index.ts',
+        type: 'file',
+        language: 'typescript',
+        file_path: 'src/index.ts',
+        metrics: { in_degree: 0, out_degree: 0 },
+      },
+    ],
+    edges: [],
+    total_files_analyzed: 1,
+    total_symbols_extracted: 0,
+    entry_points: ['src/index.ts'],
+  }),
 }));
 
-describe('LandingPage Component (Phase 2)', () => {
+describe('LandingPage Component (Phase 3)', () => {
   it('renders product branding and headline', async () => {
     await act(async () => {
       render(<LandingPage />);

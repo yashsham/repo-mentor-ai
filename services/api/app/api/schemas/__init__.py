@@ -9,6 +9,16 @@ from app.api.schemas.repository import (
     RepositoryAnalyzeResponse,
     FileContentResponse,
 )
+from app.api.schemas.analysis import (
+    SourceSpan,
+    Symbol,
+    ImportStatement,
+    FileAnalysisResult,
+    GraphNode,
+    GraphEdge,
+    DependencyGraph,
+    FileParseRequest,
+)
 
 __all__ = [
     "HealthResponse",
@@ -18,4 +28,12 @@ __all__ = [
     "FileNode",
     "RepositoryAnalyzeResponse",
     "FileContentResponse",
+    "SourceSpan",
+    "Symbol",
+    "ImportStatement",
+    "FileAnalysisResult",
+    "GraphNode",
+    "GraphEdge",
+    "DependencyGraph",
+    "FileParseRequest",
 ]
